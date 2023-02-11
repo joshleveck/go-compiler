@@ -8,4 +8,8 @@ impl ErrorHandler {
     pub fn error(&self, line: usize, msg: &str) {
         self.report(line, "", msg);
     }
+
+    pub fn new() -> ErrorHandler {
+        ErrorHandler()
+    }
 }

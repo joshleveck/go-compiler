@@ -7,6 +7,7 @@ pub struct Lexer<'src> {
     src_len: usize,
     start: usize,
     line: usize,
+    error_handler: error::ErrorHandler,
 }
 
 impl Lexer<'_> {
@@ -17,22 +18,14 @@ impl Lexer<'_> {
             src_len: src.len(),
             start: 0,
             line: 1,
+            error_handler: error::ErrorHandler::new(),
         }
     }
 
-    // pub fn scanTokens(&mut self) {
-    //     while !self.isAtEnd() {
-    //         self.start = self.current;
-    //         self.scanToken();
-    //     }
-    //     self.tokens.push(token::Token::new(
-    //         token::TokenTypes::EOF,
-    //         &Vec::<u8>::new(),
-    //         self.line,
-    //     ));
-    // }
-
     fn scan_token(&mut self) -> token::Token {
+        if self.is_at_end() {
+            return self.get_token(token::TokenTypes::Eof);
+        }
         let c: u8 = self.advance();
         match c {
             b'(' => return self.get_token(token::TokenTypes::LParen),
@@ -44,14 +37,28 @@ impl Lexer<'_> {
             b'+' => return self.get_token(token::TokenTypes::Add),
             b';' => return self.get_token(token::TokenTypes::Semicolon),
             b'*' => return self.get_token(token::TokenTypes::Mul),
-            b'!' => {
-                if self.matches(b'=') {
-                    return self.get_token(token::TokenTypes::Neq);
+            b'!' => return self.eq_after(token::TokenTypes::Not, token::TokenTypes::Neq),
+            b'=' => return self.eq_after(token::TokenTypes::Assign, token::TokenTypes::Eql),
+            b'<' => return self.eq_after(token::TokenTypes::Lss, token::TokenTypes::Leq),
+            b'>' => return self.eq_after(token::TokenTypes::Gtr, token::TokenTypes::Geq),
+            b'/' => {
+                if self.matches(b'/') {
+                    while self.peek() != b'\n' && !self.is_at_end() {
+                        self.advance();
+                    }
+                    return self.scan_token();
+                } else {
+                    return self.get_token(token::TokenTypes::Quo);
                 }
-                return self.get_token(token::TokenTypes::Not);
             }
+            b' ' | b'\r' | b'\t' => return self.scan_token(),
+            b'\n' => {
+                self.line += 1;
+                return self.scan_token();
+            }
+            b'"' => return self.string(),
             _ => {
-                error::ErrorHandler().error(self.line, "Unexpected character.");
+                self.error_handler.error(self.line, "Unexpected character.");
                 return self.scan_token();
             }
         }
@@ -73,6 +80,37 @@ impl Lexer<'_> {
         }
         self.current += 1;
         return true;
+    }
+
+    fn eq_after(&mut self, t1: token::TokenTypes, t2: token::TokenTypes) -> token::Token {
+        if self.matches(b'=') {
+            return self.get_token(t2);
+        }
+        return self.get_token(t1);
+    }
+
+    fn peek(&self) -> u8 {
+        if self.is_at_end() {
+            return b'\0';
+        }
+        return self.src[self.current];
+    }
+
+    fn string(&mut self) -> token::Token {
+        while self.peek() != b'"' && !self.is_at_end() {
+            if self.peek() == b'\n' {
+                self.line += 1;
+            }
+            self.advance();
+        }
+
+        if self.is_at_end() {
+            self.error_handler.error(self.line, "Unterminated string.");
+            return self.get_token(token::TokenTypes::Eof);
+        }
+
+        self.advance();
+        return self.get_token(token::TokenTypes::String);
     }
 
     fn get_token(&self, token_type: token::TokenTypes) -> token::Token {
