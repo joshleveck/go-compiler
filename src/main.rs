@@ -12,6 +12,8 @@ fn main() {
     let data: Vec<u8> = fs::read(src_file).expect("Unable to read file");
     println!("{}", data.len());
 
-    error::ErrorHandler().error(32, "help");
+    for token in lexer::Lexer::new(&data) {
+        println!("{}", token);
+    };
     
 }

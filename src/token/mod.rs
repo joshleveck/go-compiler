@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str;
 
 pub struct Token {
     token_type: TokenTypes,
@@ -18,10 +19,11 @@ impl Token {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        return write!(f, "Lexeme: {:?}, Line: {}",self.lexeme, self.line);
+        return write!(f, "Lexeme: {:?}, Line: {}, Type: {:?}",str::from_utf8(&self.lexeme).unwrap(), self.line, self.token_type);
     }
 }
 
+#[derive(Debug)]
 pub enum TokenTypes {
     // Keywords
     Break,
@@ -49,6 +51,8 @@ pub enum TokenTypes {
     Import,
     Return,
     Var,
+    While,
+    Dot,
 
     // Operators and delimiters
     Add,
@@ -108,8 +112,13 @@ pub enum TokenTypes {
     Imag,
     Char,
     String,
+    RawString,
+    False,
+    True,
+    Nil,
 
     // Misc
     Illegal,
+    Identifier,
     Eof,
 }
