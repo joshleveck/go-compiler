@@ -1,5 +1,9 @@
 use crate::error;
-use crate::token;
+use crate::token::{Token, TokenTypes};
+use std::str;
+
+#[cfg(test)]
+mod test;
 
 pub struct Lexer<'src> {
     current: usize,
@@ -22,36 +26,106 @@ impl Lexer<'_> {
         }
     }
 
-    fn scan_token(&mut self) -> token::Token {
+    fn scan_token(&mut self) -> Token {
         if self.is_at_end() {
-            return self.get_token(token::TokenTypes::Eof);
+            return self.get_token(TokenTypes::Eof);
         }
         self.start = self.current;
         let c: u8 = self.advance();
         match c {
-            b'(' => return self.get_token(token::TokenTypes::LParen),
-            b')' => return self.get_token(token::TokenTypes::RParen),
-            b'{' => return self.get_token(token::TokenTypes::LBrace),
-            b'}' => return self.get_token(token::TokenTypes::RBrace),
-            b',' => return self.get_token(token::TokenTypes::Comma),
-            b'.' => return self.get_token(token::TokenTypes::Dot),
-            b'-' => return self.get_token(token::TokenTypes::Sub),
-            b'+' => return self.get_token(token::TokenTypes::Add),
-            b';' => return self.get_token(token::TokenTypes::Semicolon),
-            b'*' => return self.get_token(token::TokenTypes::Mul),
-            b'!' => return self.eq_after(token::TokenTypes::Not, token::TokenTypes::Neq),
-            b'=' => return self.eq_after(token::TokenTypes::Assign, token::TokenTypes::Eql),
-            b':' => return self.eq_after(token::TokenTypes::Colon, token::TokenTypes::Define),
-            b'<' => return self.eq_after(token::TokenTypes::Lss, token::TokenTypes::Leq),
-            b'>' => return self.eq_after(token::TokenTypes::Gtr, token::TokenTypes::Geq),
+            b'(' => return self.get_token(TokenTypes::LParen),
+            b')' => return self.get_token(TokenTypes::RParen),
+            b'{' => return self.get_token(TokenTypes::LBrace),
+            b'}' => return self.get_token(TokenTypes::RBrace),
+            b'[' => return self.get_token(TokenTypes::LBrack),
+            b']' => return self.get_token(TokenTypes::RBrack),
+            b',' => return self.get_token(TokenTypes::Comma),
+            b'-' => {
+                if self.matches(b'-') {
+                    return self.get_token(TokenTypes::Decrement);
+                } else if self.matches(b'=') {
+                    return self.get_token(TokenTypes::SubAssign);
+                }
+                return self.get_token(TokenTypes::Sub);
+            }
+            b'+' => {
+                if self.matches(b'+') {
+                    return self.get_token(TokenTypes::Increment);
+                } else if self.matches(b'=') {
+                    return self.get_token(TokenTypes::AddAssign);
+                }
+                return self.get_token(TokenTypes::Add);
+            }
+            b';' => return self.get_token(TokenTypes::Semicolon),
+            b'*' => return self.eq_after(TokenTypes::Mul, TokenTypes::MulAssign),
+            b'!' => return self.eq_after(TokenTypes::Not, TokenTypes::Neq),
+            b'=' => return self.eq_after(TokenTypes::Assign, TokenTypes::Eql),
+            b':' => return self.eq_after(TokenTypes::Colon, TokenTypes::Define),
+            b'<' => {
+                if self.matches(b'-') {
+                    return self.get_token(TokenTypes::Arrow);
+                } else if self.matches(b'<') {
+                    return self.eq_after(TokenTypes::Lshift, TokenTypes::LshiftAssign);
+                }
+                return self.eq_after(TokenTypes::Lss, TokenTypes::Leq);
+            }
+            b'>' => {
+                if self.matches(b'>') {
+                    return self.eq_after(TokenTypes::Rshift, TokenTypes::RshiftAssign);
+                }
+                return self.eq_after(TokenTypes::Gtr, TokenTypes::Geq);
+            }
+            b'^' => return self.eq_after(TokenTypes::Caret, TokenTypes::CaretAssign),
+            b'%' => return self.eq_after(TokenTypes::Percent, TokenTypes::PercentAssign),
+            b'&' => {
+                if self.matches(b'&') {
+                    return self.get_token(TokenTypes::And);
+                } else if self.matches(b'=') {
+                    return self.get_token(TokenTypes::AndAssign);
+                } else if self.matches(b'^') {
+                    if self.peek() == b'=' {
+                        self.advance();
+                        return self.get_token(TokenTypes::BitClearAssign);
+                    } else {
+                        return self.get_token(TokenTypes::BitClear);
+                    }
+                } else {
+                    return self.get_token(TokenTypes::Amp);
+                }
+            }
+            b'|' => {
+                if self.matches(b'=') {
+                    return self.get_token(TokenTypes::OrAssign);
+                } else if self.matches(b'|') {
+                    return self.get_token(TokenTypes::OrOr);
+                } else {
+                    return self.get_token(TokenTypes::Or);
+                }
+            }
             b'/' => {
                 if self.matches(b'/') {
                     while self.peek() != b'\n' && !self.is_at_end() {
                         self.advance();
                     }
                     return self.scan_token();
+                } else if self.matches(b'*') {
+                    while !self.is_at_end() {
+                        if self.peek() == b'*' && self.peek_next() == b'/' {
+                            break;
+                        } else if self.peek() == b'\n' {
+                            self.line += 1;
+                        }
+                        self.advance();
+                    }
+                    if self.is_at_end() {
+                        self.error_handler.error(self.line, "Unterminated comment.");
+                        return self.scan_token();
+                    }
+                    self.advance();
+                    self.advance();
+                    return self.scan_token();
                 } else {
-                    return self.get_token(token::TokenTypes::Quo);
+                    return self.eq_after(TokenTypes::Quo, TokenTypes::QuoAssign);
                 }
             }
             b' ' | b'\r' | b'\t' | b'\0' => return self.scan_token(),
@@ -62,12 +136,24 @@ impl Lexer<'_> {
             b'"' => return self.string(),
             b'`' => return self.raw_string(),
             _ => {
-                if c >= b'0' && c <= b'9' {
-                    return self.number();
+                if c == b'.' {
+                    if self.peek() == b'.' && self.peek_next() == b'.' {
+                        self.advance();
+                        self.advance();
+                        return self.get_token(TokenTypes::Ellipsis);
+                    } else {
+                        return self.get_token(TokenTypes::Dot);
+                    }
+                }
+                if (c >= b'0' && c <= b'9') || c == b'.' {
+                    return self.number(c);
                 } else if (c >= b'a' && c <= b'z') || (c >= b'A' && c <= b'Z') || c == b'_' {
                     return self.identifier();
                 } else {
-                    self.error_handler.error(self.line, "Unexpected character.");
+                    self.error_handler.error(
+                        self.line,
+                        &format!("Unexpected character {}.", str::from_utf8(&[c]).unwrap()),
+                    );
                     return self.scan_token();
                 }
             }
@@ -92,7 +178,7 @@ impl Lexer<'_> {
         return true;
     }
 
-    fn eq_after(&mut self, t1: token::TokenTypes, t2: token::TokenTypes) -> token::Token {
+    fn eq_after(&mut self, t1: TokenTypes, t2: TokenTypes) -> Token {
         if self.matches(b'=') {
             return self.get_token(t2);
         }
@@ -106,7 +192,7 @@ impl Lexer<'_> {
         return self.src[self.current];
     }
 
-    fn string(&mut self) -> token::Token {
+    fn string(&mut self) -> Token {
         while self.peek() != b'"' && !self.is_at_end() {
             if self.peek() == b'\n' {
                 self.line += 1;
@@ -116,14 +202,14 @@ impl Lexer<'_> {
 
         if self.is_at_end() {
             self.error_handler.error(self.line, "Unterminated string.");
-            return self.get_token(token::TokenTypes::Eof);
+            return self.get_token(TokenTypes::Eof);
         }
 
         self.advance();
-        return self.get_token(token::TokenTypes::String);
+        return self.get_token(TokenTypes::String);
     }
 
-    fn raw_string(&mut self) -> token::Token {
+    fn raw_string(&mut self) -> Token {
         while self.peek() != b'`' && !self.is_at_end() {
             if self.peek() == b'\n' {
                 self.line += 1;
@@ -133,34 +219,79 @@ impl Lexer<'_> {
 
         if self.is_at_end() {
             self.error_handler.error(self.line, "Unterminated string.");
-            return self.get_token(token::TokenTypes::Eof);
+            return self.get_token(TokenTypes::Eof);
         }
 
         self.advance();
-        return self.get_token(token::TokenTypes::RawString);
+        return self.get_token(TokenTypes::RawString);
     }
 
-    fn get_token(&self, token_type: token::TokenTypes) -> token::Token {
-        return token::Token::new(
+    fn get_token(&self, token_type: TokenTypes) -> Token {
+        return Token::new(
             token_type,
             self.src[self.start..self.current].to_vec(),
             self.line,
         );
     }
 
-    fn number(&mut self) -> token::Token {
-        while self.peek() >= b'0' && self.peek() <= b'9' {
+    fn number(&mut self, c: u8) -> Token {
+        if c == b'0' && (self.peek() == b'x' || self.peek() == b'X') {
             self.advance();
+
+            while self.peek().is_ascii_hexdigit() {
+                self.advance();
+            }
+
+            return self.get_token(TokenTypes::Hex);
         }
 
-        if self.peek() == b'.' && self.peek_next() >= b'0' && self.peek_next() <= b'9' {
+        if c == b'0' && (self.peek() == b'b' || self.peek() == b'B') {
             self.advance();
-            while self.peek() >= b'0' && self.peek() <= b'9' {
+
+            while self.peek() == b'0' || self.peek() == b'1' {
                 self.advance();
+            }
+
+            return self.get_token(TokenTypes::Binary);
+        }
+
+        let is_lead_zero = c == b'0';
+        let mut has_e = false;
+        let mut has_dot = false;
+        let mut is_octal = true;
+
+        loop {
+            if self.peek() >= b'0' && self.peek() <= b'7' {
+                self.advance();
+            } else if self.peek().is_ascii_digit() {
+                self.advance();
+                is_octal = false;
+            } else if !has_e && (self.peek() == b'e' || self.peek() == b'E') {
+                self.advance();
+                has_e = true;
+                if self.peek() == b'+' || self.peek() == b'-' {
+                    self.advance();
+                }
+            } else if !has_e && !has_dot && self.peek() == b'.' {
+                self.advance();
+                has_dot = true;
+            } else if self.peek() == b'i' {
+                self.advance();
+                return self.get_token(TokenTypes::Imag);
+            } else {
+                break;
             }
         }
 
-        return self.get_token(token::TokenTypes::Int);
+        let token_type = if has_e || has_dot {
+            TokenTypes::Float
+        } else if is_lead_zero && is_octal {
+            TokenTypes::Octal
+        } else {
+            TokenTypes::Int
+        };
+
+        return self.get_token(token_type);
     }
 
     fn peek_next(&self) -> u8 {
@@ -170,7 +301,7 @@ impl Lexer<'_> {
         return self.src[self.current + 1];
     }
 
-    fn identifier(&mut self) -> token::Token {
+    fn identifier(&mut self) -> Token {
         while (self.peek() >= b'a' && self.peek() <= b'z')
             || (self.peek() >= b'A' && self.peek() <= b'Z')
             || (self.peek() >= b'0' && self.peek() <= b'9')
@@ -180,21 +311,36 @@ impl Lexer<'_> {
         }
 
         let text: Vec<u8> = self.src[self.start..self.current].to_vec();
-        let token_type: token::TokenTypes = match text.as_slice() {
-            b"and" => token::TokenTypes::And,
-            b"struct" => token::TokenTypes::Struct,
-            b"else" => token::TokenTypes::Else,
-            b"false" => token::TokenTypes::False,
-            b"for" => token::TokenTypes::For,
-            b"func" => token::TokenTypes::Func,
-            b"if" => token::TokenTypes::If,
-            b"nil" => token::TokenTypes::Nil,
-            b"return" => token::TokenTypes::Return,
-            b"true" => token::TokenTypes::True,
-            b"var" => token::TokenTypes::Var,
-            b"while" => token::TokenTypes::While,
-            b"Const" => token::TokenTypes::Const,
-            _ => token::TokenTypes::Identifier,
+        let token_type: TokenTypes = match text.as_slice() {
+            b"break" => TokenTypes::Break,
+            b"case" => TokenTypes::Case,
+            b"chan" => TokenTypes::Chan,
+            b"const" => TokenTypes::Const,
+            b"continue" => TokenTypes::Continue,
+            b"default" => TokenTypes::Default,
+            b"defer" => TokenTypes::Defer,
+            b"else" => TokenTypes::Else,
+            b"fallthrough" => TokenTypes::Fallthrough,
+            b"for" => TokenTypes::For,
+            b"func" => TokenTypes::Func,
+            b"go" => TokenTypes::Go,
+            b"goto" => TokenTypes::Goto,
+            b"if" => TokenTypes::If,
+            b"import" => TokenTypes::Import,
+            b"interface" => TokenTypes::Interface,
+            b"map" => TokenTypes::Map,
+            b"package" => TokenTypes::Package,
+            b"range" => TokenTypes::Range,
+            b"return" => TokenTypes::Return,
+            b"select" => TokenTypes::Select,
+            b"struct" => TokenTypes::Struct,
+            b"switch" => TokenTypes::Switch,
+            b"type" => TokenTypes::Type,
+            b"var" => TokenTypes::Var,
+            b"true" => TokenTypes::True,
+            b"false" => TokenTypes::False,
+            b"nil" => TokenTypes::Nil,
+            _ => TokenTypes::Identifier,
         };
 
         return self.get_token(token_type);
@@ -202,7 +348,7 @@ impl Lexer<'_> {
 }
 
 impl Iterator for Lexer<'_> {
-    type Item = token::Token;
+    type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.is_at_end() {

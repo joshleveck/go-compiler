@@ -2,9 +2,9 @@ use std::fmt;
 use std::str;
 
 pub struct Token {
-    token_type: TokenTypes,
-    lexeme: Vec<u8>,
-    line: usize,
+    pub token_type: TokenTypes,
+    pub lexeme: Vec<u8>,
+    pub line: usize,
 }
 
 impl Token {
@@ -24,6 +24,7 @@ impl fmt::Display for Token {
 }
 
 #[derive(Debug)]
+#[derive(PartialEq)]
 pub enum TokenTypes {
     // Keywords
     Break,
@@ -51,7 +52,6 @@ pub enum TokenTypes {
     Import,
     Return,
     Var,
-    While,
     Dot,
 
     // Operators and delimiters
@@ -59,35 +59,22 @@ pub enum TokenTypes {
     Sub,
     Mul,
     Quo,
-    Rem,
     And,
+    Amp,
     Or,
-    Xor,
-    Shl,
-    Shr,
-    AndNot,
+    OrOr,
     AddAssign,
     SubAssign,
     MulAssign,
     QuoAssign,
-    RemAssign,
     AndAssign,
     OrAssign,
-    XorAssign,
-    ShlAssign,
-    ShrAssign,
-    AndNotAssign,
-    LAnd,
-    LOr,
     Arrow,
-    Inc,
-    Dec,
     Eql,
     Lss,
     Gtr,
     Assign,
     Not,
-    Neg,
     Neq,
     Leq,
     Geq,
@@ -97,20 +84,32 @@ pub enum TokenTypes {
     LBrack,
     LBrace,
     Comma,
-    Period,
     RParen,
     RBrack,
     RBrace,
     Semicolon,
     Colon,
-    DBlColon,
+    Caret,
+    Percent,
+    CaretAssign,
+    PercentAssign,
+    BitClear,
+    BitClearAssign,
+    Increment,
+    Decrement,
+    Lshift,
+    LshiftAssign,
+    Rshift,
+    RshiftAssign,
+    
 
     // Literals
-    Ident,
     Int,
+    Octal,
+    Hex,
+    Binary,
     Float,
     Imag,
-    Char,
     String,
     RawString,
     False,
@@ -118,7 +117,6 @@ pub enum TokenTypes {
     Nil,
 
     // Misc
-    Illegal,
     Identifier,
     Eof,
 }
